@@ -1,19 +1,39 @@
 /**
  * Clay Extension: Pie Chart
  * 
- * A header-only extension for rendering pie charts using Clay layout.
+ * A header-only extension for rendering pie charts using Clay's custom element system.
  * This extension provides easy-to-use components for proportional data visualization.
  * 
  * Usage:
  *   #define CLAY_EXTEND_PIECHART_IMPLEMENTATION
- *   #include "clay_extend_piechart.h"
+ *   #include "clay_extensions_piechart.h"
  * 
  * Features:
- *   - Pie and donut charts
+ *   - Pie and donut charts as native Clay custom elements
  *   - Customizable colors and sizing
  *   - Automatic percentage calculation
  *   - Optional labels and legends
  *   - Exploded segments
+ *   - Integrated with Clay's layout and rendering system
+ * 
+ * Example:
+ *   Clay_PieChart_DataPoint data[] = {
+ *       { .value = 30, .label = CLAY_STRING("Red"), .color = COLOR_RED },
+ *       { .value = 50, .label = CLAY_STRING("Blue"), .color = COLOR_BLUE },
+ *       { .value = 20, .label = CLAY_STRING("Green"), .color = COLOR_GREEN }
+ *   };
+ *   
+ *   Clay_PieChart_Config config = Clay_PieChart_DefaultConfig();
+ *   config.data = data;
+ *   config.dataCount = 3;
+ *   
+ *   CLAY_PIECHART(CLAY_STRING("MyChart"), &config, 400, 400);
+ *   
+ *   // Then in your render loop, handle CLAY_RENDER_COMMAND_TYPE_CUSTOM:
+ *   case CLAY_RENDER_COMMAND_TYPE_CUSTOM: {
+ *       Clay_PieChart_RenderCustomElement(cmd);
+ *       break;
+ *   }
  */
 
 #ifndef CLAY_EXTEND_PIECHART_H
@@ -35,6 +55,9 @@
 // ============================================================================
 // PUBLIC API - Configuration Structures
 // ============================================================================
+
+// Custom element type identifier for piechart
+#define CLAY_PIECHART_CUSTOM_ELEMENT_TYPE 0x50494543 // 'PIEC' in ASCII
 
 typedef struct {
     float value;
@@ -90,28 +113,59 @@ typedef struct {
     } colorConfig;
 } Clay_PieChart_Config;
 
+// Internal data structure passed through Clay's custom element system
+typedef struct {
+    uint32_t elementType;  // Always CLAY_PIECHART_CUSTOM_ELEMENT_TYPE
+    Clay_PieChart_Config config;
+    float totalValue;  // Pre-calculated total for efficiency
+    uint32_t configHash;  // Hash of config for caching
+    RenderTexture2D texture;  // Cached render texture
+    bool textureValid;  // Whether texture needs regeneration
+} Clay_PieChart_CustomElementData;
+
 // ============================================================================
 // PUBLIC API - Functions
 // ============================================================================
 
 /**
- * Render a pie chart component
+ * Render a pie chart as a Clay custom element
+ * Auto-sizes to fill parent container with padding.
  * 
  * @param id Unique ID for this chart element
- * @param config Configuration for the pie chart
- * @param width Width of the chart container
- * @param height Height of the chart container
+ * @param config Configuration for the pie chart (will be copied)
+ * 
+ * Note: The config data will be stored in Clay's arena and passed through
+ * to the render commands. Make sure your data pointers remain valid.
  */
-void Clay_PieChart_Render(Clay_String id, Clay_PieChart_Config *config, float width, float height);
+void Clay_PieChart_Render(Clay_String id, Clay_PieChart_Config *config);
 
 /**
- * Draw the actual pie chart graphics (call this after Clay layout but before Clay_Raylib_Render)
+ * Macro for easier pie chart creation with automatic ID handling
  * 
- * @param chartId The element ID of the main chart container (same as used in Clay_PieChart_Render)
- * @param config Configuration for the pie chart
- * @param renderCommands The render command array to find element bounds
+ * @param id Clay_String ID for this chart
+ * @param config Pointer to Clay_PieChart_Config
+ * @param width Width in pixels
+ * @param height Height in pixels
+ * 
+ * Example: CLAY_PIECHART(CLAY_STRING("Sales"), &config, 400, 400);
  */
-void Clay_PieChart_Draw(Clay_String chartId, Clay_PieChart_Config *config, Clay_RenderCommandArray renderCommands);
+#define CLAY_PIECHART(id, config, width, height) Clay_PieChart_Render(id, config, width, height)
+
+/**
+ * Render a pie chart custom element to texture (call before Clay_Raylib_Render)
+ * This generates/updates the texture if data changed
+ * 
+ * @param renderCommand The render command from Clay's output
+ */
+void Clay_PieChart_PrepareTexture(Clay_RenderCommand *renderCommand);
+
+/**
+ * Get the texture for a pie chart custom element (used by renderer)
+ * 
+ * @param renderCommand The render command from Clay's output
+ * @return Pointer to RenderTexture2D or NULL if not a pie chart
+ */
+RenderTexture2D* Clay_PieChart_GetTexture(Clay_RenderCommand *renderCommand);
 
 /**
  * Create a default pie chart configuration
@@ -123,6 +177,35 @@ Clay_PieChart_Config Clay_PieChart_DefaultConfig(void);
 // ============================================================================
 
 #ifdef CLAY_EXTEND_PIECHART_IMPLEMENTATION
+
+// Internal helper: Simple hash function for config data
+static uint32_t Clay_PieChart__HashConfig(Clay_PieChart_Config *config) {
+    uint32_t hash = 2166136261u; // FNV-1a offset basis
+    
+    // Hash data values and basic config
+    for (uint32_t i = 0; i < config->dataCount; i++) {
+        // Hash value
+        uint32_t valueInt = *(uint32_t*)&config->data[i].value;
+        hash ^= valueInt;
+        hash *= 16777619u;
+        
+        // Hash exploded flag
+        hash ^= config->data[i].exploded ? 1 : 0;
+        hash *= 16777619u;
+    }
+    
+    // Hash config parameters
+    hash ^= *(uint32_t*)&config->radius;
+    hash *= 16777619u;
+    hash ^= *(uint32_t*)&config->donutHoleRadius;
+    hash *= 16777619u;
+    hash ^= config->colorMode;
+    hash *= 16777619u;
+    hash ^= config->showSectorLines ? 1 : 0;
+    hash *= 16777619u;
+    
+    return hash;
+}
 
 // Internal helper: Calculate total value from data
 static float Clay_PieChart__CalculateTotalValue(Clay_PieChart_Config *config) {
@@ -258,8 +341,8 @@ static void Clay_PieChart__RenderSegment(
     }
 }
 
-// Internal helper: Render legend
-static void Clay_PieChart__RenderLegend(Clay_PieChart_Config *config) {
+// Internal helper: Render legend as standard Clay elements
+static void Clay_PieChart__RenderLegend(Clay_PieChart_Config *config, float totalValue) {
     CLAY(
         CLAY_ID("PieLegend"),
         {
@@ -276,8 +359,6 @@ static void Clay_PieChart__RenderLegend(Clay_PieChart_Config *config) {
             .cornerRadius = CLAY_CORNER_RADIUS(8)
         }
     ) {
-        float totalValue = Clay_PieChart__CalculateTotalValue(config);
-        
         for (uint32_t i = 0; i < config->dataCount; i++) {
             CLAY(
                 CLAY_IDI("LegendItem", i),
@@ -324,7 +405,7 @@ static void Clay_PieChart__RenderLegend(Clay_PieChart_Config *config) {
                 }
                 
                 // Percentage
-                static char percentBuffers[32][32];  // Array for each item
+                static char percentBuffers[32][32];  // Static array for each legend item
                 float percentage = (config->data[i].value / totalValue) * 100.0f;
                 int len = snprintf(percentBuffers[i], sizeof(percentBuffers[i]), "(%.1f%%)", percentage);
                 Clay_String percentString = (Clay_String) {
@@ -352,8 +433,9 @@ static void Clay_PieChart__RenderLegend(Clay_PieChart_Config *config) {
     }
 }
 
-// Main render function
-void Clay_PieChart_Render(Clay_String id, Clay_PieChart_Config *config, float width, float height) {
+// Main render function - creates a Clay custom element
+// Main render function - creates a Clay custom element, auto-sizes to parent
+void Clay_PieChart_Render(Clay_String id, Clay_PieChart_Config *config) {
     if (config->dataCount == 0 || config->data == NULL) {
         return;
     }
@@ -363,15 +445,36 @@ void Clay_PieChart_Render(Clay_String id, Clay_PieChart_Config *config, float wi
         return;
     }
     
-    // Main chart container
+    // Allocate custom element data in static storage
+    // Note: This uses simple static storage. In production you might want to use
+    // Clay's arena or your own allocation mechanism
+    static Clay_PieChart_CustomElementData elementDataStorage;
+    
+    Clay_PieChart_CustomElementData *elementData = &elementDataStorage;
+    
+    // Free old texture if this slot was previously used (prevents memory leak)
+    if (elementData->textureValid && elementData->texture.id != 0) {
+        UnloadRenderTexture(elementData->texture);
+        elementData->textureValid = false;
+    }
+    
+    // Store the config data
+    elementData->elementType = CLAY_PIECHART_CUSTOM_ELEMENT_TYPE;
+    elementData->config = *config;  // Copy the config
+    elementData->totalValue = totalValue;
+    elementData->configHash = Clay_PieChart__HashConfig(config);
+    elementData->textureValid = false;  // Will be created on first render
+    elementData->texture = (RenderTexture2D){0};  // Initialize to zero
+    
+    // Main chart container - grows to fill parent
     CLAY(
         CLAY_SID(id),
         {
             .layout = {
                 .layoutDirection = config->showLegend ? CLAY_LEFT_TO_RIGHT : CLAY_TOP_TO_BOTTOM,
                 .sizing = {
-                    .width = CLAY_SIZING_FIXED(width),
-                    .height = CLAY_SIZING_FIXED(height)
+                    .width = CLAY_SIZING_GROW(0),
+                    .height = CLAY_SIZING_GROW(0)
                 },
                 .padding = CLAY_PADDING_ALL(16),
                 .childGap = 24,
@@ -384,9 +487,9 @@ void Clay_PieChart_Render(Clay_String id, Clay_PieChart_Config *config, float wi
             .cornerRadius = CLAY_CORNER_RADIUS(8)
         }
     ) {
-        // Pie chart area - use a custom element to mark where to draw
+        // Pie chart area - create a custom element
         CLAY(
-            CLAY_ID("PieArea"),
+            CLAY_ID("PieChartCustom"),
             {
                 .layout = {
                     .sizing = {
@@ -394,85 +497,121 @@ void Clay_PieChart_Render(Clay_String id, Clay_PieChart_Config *config, float wi
                         .height = CLAY_SIZING_FIXED(config->radius * 2 + config->explodeDistance * 2)
                     }
                 },
-                .backgroundColor = (Clay_Color){0, 0, 0, 0}  // Transparent
+                .custom = {
+                    .customData = elementData
+                }
             }
         ) {}
         
         // Legend (if enabled)
         if (config->showLegend) {
-            Clay_PieChart__RenderLegend(config);
+            Clay_PieChart__RenderLegend(config, totalValue);
         }
     }
 }
 
-// Draw the actual pie chart (call after Clay_EndLayout)
-void Clay_PieChart_Draw(Clay_String chartId, Clay_PieChart_Config *config, Clay_RenderCommandArray renderCommands) {
-    if (config->dataCount == 0 || config->data == NULL) {
-        fprintf(stderr, "PieChart: No data (count=%d, data=%p)\n", config->dataCount, config->data);
+// Prepare texture for rendering (call before Clay_Raylib_Render)
+void Clay_PieChart_PrepareTexture(Clay_RenderCommand *renderCommand) {
+    // Verify this is a pie chart custom element
+    Clay_PieChart_CustomElementData *elementData = 
+        (Clay_PieChart_CustomElementData *)renderCommand->renderData.custom.customData;
+    
+    if (!elementData || elementData->elementType != CLAY_PIECHART_CUSTOM_ELEMENT_TYPE) {
+        return;  // Not a pie chart element, skip
+    }
+    
+    Clay_PieChart_Config *config = &elementData->config;
+    float totalValue = elementData->totalValue;
+    
+    if (config->dataCount == 0 || config->data == NULL || totalValue <= 0.0f) {
         return;
     }
     
-    float totalValue = Clay_PieChart__CalculateTotalValue(config);
-    if (totalValue <= 0.0f) {
-        return;
-    }
+    // Calculate required texture size from actual bounding box
+    // Use 2x resolution for better quality (supersampling)
+    Clay_BoundingBox bounds = renderCommand->boundingBox;
+    int texWidth = (int)(bounds.width * 2.0f);
+    int texHeight = (int)(bounds.height * 2.0f);
     
-    // Find the main chart container element in render commands
-    Clay_BoundingBox chartBounds = {0};
-    bool found = false;
-    Clay_ElementId chartElementId = Clay_GetElementId(chartId);
+    // Ensure minimum size for quality
+    if (texWidth < 128) texWidth = 128;
+    if (texHeight < 128) texHeight = 128;
     
-    for (uint32_t i = 0; i < renderCommands.length; i++) {
-        Clay_RenderCommand *cmd = &renderCommands.internalArray[i];
-        if (cmd->id == chartElementId.id) {
-            chartBounds = cmd->boundingBox;
-            found = true;
-            break;
+    // Check if we need to regenerate texture
+    uint32_t currentHash = Clay_PieChart__HashConfig(config);
+    bool needsRegeneration = !elementData->textureValid || 
+                             elementData->configHash != currentHash ||
+                             elementData->texture.texture.width != texWidth ||
+                             elementData->texture.texture.height != texHeight;
+    
+    if (needsRegeneration) {
+        // Unload old texture if it exists
+        if (elementData->textureValid && elementData->texture.id != 0) {
+            UnloadRenderTexture(elementData->texture);
         }
-    }
-    
-    if (!found) {
-        fprintf(stderr, "PieChart: Element not found! Tried ID %u\n", chartElementId.id);
-        fprintf(stderr, "PieChart: First 5 element IDs in render commands:\n");
-        for (uint32_t i = 0; i < 5 && i < renderCommands.length; i++) {
-            fprintf(stderr, "  [%d] ID: %u\n", i, renderCommands.internalArray[i].id);
+        
+        // Create new render texture
+        elementData->texture = LoadRenderTexture(texWidth, texHeight);
+        
+        // Render pie chart to texture
+        BeginTextureMode(elementData->texture);
+        ClearBackground((Color){0, 0, 0, 0});  // Transparent background
+        
+        // Calculate scale factor to use full texture resolution
+        float maxDimension = (config->radius * 2.0f + config->explodeDistance * 2.0f);
+        float scaleX = texWidth / maxDimension;
+        float scaleY = texHeight / maxDimension;
+        float scale = (scaleX < scaleY) ? scaleX : scaleY;
+        
+        float centerX = texWidth / 2.0f;
+        float centerY = texHeight / 2.0f;
+        float currentAngleDeg = config->startAngle;
+        
+        // Temporarily scale the config for high-res rendering
+        Clay_PieChart_Config scaledConfig = *config;
+        scaledConfig.radius *= scale;
+        scaledConfig.explodeDistance *= scale;
+        scaledConfig.donutHoleRadius *= scale;
+        
+        for (uint32_t i = 0; i < scaledConfig.dataCount; i++) {
+            float sweepAngleDeg = (scaledConfig.data[i].value / totalValue) * 360.0f;
+            
+            Clay_PieChart__RenderSegment(
+                &scaledConfig.data[i],
+                i,
+                centerX,
+                centerY,
+                currentAngleDeg,
+                sweepAngleDeg,
+                &scaledConfig,
+                i == scaledConfig.dataCount - 1  // isLast
+            );
+            
+            currentAngleDeg += sweepAngleDeg;
         }
-        return;
-    }
-    
-    // Calculate center of pie chart area
-    // Account for padding and legend if present
-    float pieAreaSize = config->radius * 2 + config->explodeDistance * 2;
-    float centerX, centerY;
-    
-    if (config->showLegend) {
-        // Legend is on the right, pie is on the left side
-        centerX = chartBounds.x + 16 + pieAreaSize / 2.0f;  // padding + half size
-        centerY = chartBounds.y + chartBounds.height / 2.0f;
-    } else {
-        // Centered
-        centerX = chartBounds.x + chartBounds.width / 2.0f;
-        centerY = chartBounds.y + chartBounds.height / 2.0f;
-    }
-    
-    float currentAngleDeg = config->startAngle;
-    
-    for (uint32_t i = 0; i < config->dataCount; i++) {
-        float sweepAngleDeg = (config->data[i].value / totalValue) * 360.0f;
         
-        Clay_PieChart__RenderSegment(
-            &config->data[i],
-            i,
-            centerX,
-            centerY,
-            currentAngleDeg,
-            sweepAngleDeg,
-            config,
-            i == config->dataCount - 1  // isLast
-        );
+        EndTextureMode();
         
-        currentAngleDeg += sweepAngleDeg;
+        // Mark texture as valid and update hash
+        elementData->textureValid = true;
+        elementData->configHash = currentHash;
     }
+}
+
+// Get texture for rendering
+RenderTexture2D* Clay_PieChart_GetTexture(Clay_RenderCommand *renderCommand) {
+    Clay_PieChart_CustomElementData *elementData = 
+        (Clay_PieChart_CustomElementData *)renderCommand->renderData.custom.customData;
+    
+    if (!elementData || elementData->elementType != CLAY_PIECHART_CUSTOM_ELEMENT_TYPE) {
+        return NULL;
+    }
+    
+    if (!elementData->textureValid) {
+        return NULL;
+    }
+    
+    return &elementData->texture;
 }
 
 // Default configuration helper

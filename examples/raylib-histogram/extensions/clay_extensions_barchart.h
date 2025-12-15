@@ -89,13 +89,12 @@ typedef struct {
 
 /**
  * Render a bar chart component
+ * Auto-sizes to fill parent container with padding.
  * 
  * @param id Unique ID for this chart element
  * @param config Configuration for the bar chart
- * @param width Width of the chart container
- * @param height Height of the chart container
  */
-void Clay_BarChart_Render(Clay_String id, Clay_BarChart_Config *config, float width, float height);
+void Clay_BarChart_Render(Clay_String id, Clay_BarChart_Config *config);
 
 /**
  * Create a default bar chart configuration
@@ -183,47 +182,38 @@ static Clay_Color Clay_BarChart__GetBarColor(Clay_BarChart_Config *config, uint3
 static void Clay_BarChart__RenderVerticalBar(
     Clay_BarChart_DataPoint *dataPoint,
     uint32_t index,
-    float barWidth,
-    float barHeight,
-    float maxHeight,
+    float calculatedBarHeight,
+    float labelHeight,
     Clay_BarChart_Config *config
 ) {
     // Static buffer array to store value strings for each bar
     static char valueBuffers[32][32];
     
-    // Calculate bar height based on value
-    float scaledHeight = (dataPoint->value / Clay_BarChart__CalculateMaxValue(config)) * maxHeight;
-    
-    // Calculate space needed for labels
-    float labelHeight = config->showLabels ? config->labelFontSize + 4 : 0;
-    float valueHeight = config->showValues ? config->labelFontSize + 4 : 0;
-    float availableBarHeight = maxHeight - labelHeight;
-    
-    // Container for bar and label
+    // Container for bar and label - uses calculated fixed height
     CLAY(
         CLAY_IDI("BarV", index),
         {
             .layout = {
                 .layoutDirection = CLAY_TOP_TO_BOTTOM,
                 .sizing = {
-                    .width = CLAY_SIZING_FIXED(barWidth),
-                    .height = CLAY_SIZING_FIXED(maxHeight + labelHeight)
+                    .width = CLAY_SIZING_GROW(4.0f), // Bar width: 4 units for 4:1 ratio with gap
+                    .height = CLAY_SIZING_FIXED(calculatedBarHeight + labelHeight)
                 },
                 .childAlignment = {
                     .x = CLAY_ALIGN_X_CENTER,
-                    .y = CLAY_ALIGN_Y_TOP
+                    .y = CLAY_ALIGN_Y_BOTTOM
                 },
-                .childGap = 0
+                .childGap = 4
             }
         }
     ) {
-        // Bar area with value on top
+        // Bar area with value on top - grows to fill minus label space
         CLAY_AUTO_ID({
             .layout = {
                 .layoutDirection = CLAY_TOP_TO_BOTTOM,
                 .sizing = {
-                    .width = CLAY_SIZING_FIXED(barWidth),
-                    .height = CLAY_SIZING_FIXED(maxHeight)
+                    .width = CLAY_SIZING_GROW(0),
+                    .height = CLAY_SIZING_FIXED(calculatedBarHeight)
                 },
                 .childAlignment = {
                     .x = CLAY_ALIGN_X_CENTER,
@@ -250,12 +240,12 @@ static void Clay_BarChart__RenderVerticalBar(
                 );
             }
             
-            // The actual bar
+            // The actual bar - grows to fill remaining space
             CLAY_AUTO_ID({
                 .layout = {
                     .sizing = {
-                        .width = CLAY_SIZING_FIXED(barWidth),
-                        .height = CLAY_SIZING_FIXED(scaledHeight)
+                        .width = CLAY_SIZING_GROW(0),
+                        .height = CLAY_SIZING_GROW(0)
                     }
                 },
                 .backgroundColor = Clay_BarChart__GetBarColor(config, index),
@@ -263,16 +253,22 @@ static void Clay_BarChart__RenderVerticalBar(
             }) {}
         }
         
-        // Label below bar (if enabled) - always at the same position
+        // Label below bar (if enabled) - fixed height
         if (config->showLabels && dataPoint->label.length > 0) {
-            CLAY_TEXT(
-                dataPoint->label,
-                CLAY_TEXT_CONFIG({
-                    .fontSize = config->labelFontSize,
-                    .fontId = config->labelFontId,
-                    .textColor = config->labelTextColor
-                })
-            );
+            CLAY_AUTO_ID({
+                .layout = {
+                    .sizing = { .height = CLAY_SIZING_FIXED(labelHeight) }
+                }
+            }) {
+                CLAY_TEXT(
+                    dataPoint->label,
+                    CLAY_TEXT_CONFIG({
+                        .fontSize = config->labelFontSize,
+                        .fontId = config->labelFontId,
+                        .textColor = config->labelTextColor
+                    })
+                );
+            }
         }
     }
 }
@@ -359,13 +355,22 @@ static void Clay_BarChart__RenderHorizontalBar(
     }
 }
 
-// Main render function
-void Clay_BarChart_Render(Clay_String id, Clay_BarChart_Config *config, float width, float height) {
+// Main render function - auto-sizes to parent container
+void Clay_BarChart_Render(Clay_String id, Clay_BarChart_Config *config) {
     if (config->dataCount == 0 || config->data == NULL) {
         return;
     }
     
-    // Main chart container
+    // Calculate max value and label heights
+    float maxValue = Clay_BarChart__CalculateMaxValue(config);
+    float labelHeight = config->showLabels ? config->labelFontSize + 4 : 0;
+    float valueHeight = config->showValues ? config->labelFontSize + 8 : 0;
+    
+    // Reference maximum bar height (tallest bar will be this height)
+    // This represents available height minus padding and labels
+    float referenceMaxHeight = 350.0f; // Adjust based on typical container size
+    
+    // Main chart container - grows to fill parent with padding
     CLAY(
         CLAY_SID(id),
         {
@@ -374,41 +379,56 @@ void Clay_BarChart_Render(Clay_String id, Clay_BarChart_Config *config, float wi
                     ? CLAY_LEFT_TO_RIGHT 
                     : CLAY_TOP_TO_BOTTOM,
                 .sizing = {
-                    .width = CLAY_SIZING_FIXED(width),
-                    .height = CLAY_SIZING_FIXED(height)
+                    .width = CLAY_SIZING_GROW(0),
+                    .height = CLAY_SIZING_GROW(0)
                 },
                 .padding = CLAY_PADDING_ALL(16),
-                .childGap = config->barGap,
+                .childGap = 0, // No gap - we add manual spacers with GROW(1)
                 .childAlignment = config->orientation == CLAY_BARCHART_ORIENTATION_VERTICAL
                     ? (Clay_ChildAlignment){ .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_BOTTOM }
-                    : (Clay_ChildAlignment){ .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_TOP }
+                    : (Clay_ChildAlignment){ .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER }
             },
             .backgroundColor = config->backgroundColor,
             .cornerRadius = CLAY_CORNER_RADIUS(8)
         }
     ) {
         if (config->orientation == CLAY_BARCHART_ORIENTATION_VERTICAL) {
-            // Render vertical bars
-            float availableHeight = height - 32; // Account for padding
+            // Render vertical bars with calculated heights
             for (uint32_t i = 0; i < config->dataCount; i++) {
+                // Calculate bar height as proportion of max height
+                float barHeightRatio = config->data[i].value / maxValue;
+                float calculatedBarHeight = barHeightRatio * referenceMaxHeight;
+                
                 Clay_BarChart__RenderVerticalBar(
                     &config->data[i],
                     i,
-                    config->barWidth,
-                    config->barWidth,
-                    availableHeight,
+                    calculatedBarHeight,
+                    labelHeight,
                     config
                 );
+                
+                // Add gap spacer between bars (not after last bar)
+                if (i < config->dataCount - 1) {
+                    CLAY(
+                        CLAY_IDI("BarGap", i),
+                        {
+                            .layout = {
+                                .sizing = {
+                                    .width = CLAY_SIZING_GROW(1.0f) // Gap: 1 unit for 4:1 ratio
+                                }
+                            }
+                        }
+                    ) {}
+                }
             }
         } else {
             // Render horizontal bars
-            float availableWidth = width - 32 - (config->showLabels ? 100 : 0); // Account for padding and labels
             for (uint32_t i = 0; i < config->dataCount; i++) {
                 Clay_BarChart__RenderHorizontalBar(
                     &config->data[i],
                     i,
                     config->barWidth,
-                    availableWidth,
+                    config->data[i].value,
                     config
                 );
             }

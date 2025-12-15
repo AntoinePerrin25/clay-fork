@@ -5,14 +5,17 @@
  * It shows both vertical and horizontal chart orientations with sample data.
  */
 
-#define CLAY_IMPLEMENTATION
-#include "../../clay.h"
-#include "../../renderers/raylib/clay_renderer_raylib.c"
-
 // Define which extensions to load
 #define CLAY_USE_BARCHART
 #define CLAY_USE_PIECHART
+
+#define CLAY_IMPLEMENTATION
+#include "../../clay.h"
+
+// Include extensions first so renderer can use their functions
 #include "extensions/extensions.h"
+
+#include "../../renderers/raylib/clay_renderer_raylib.c"
 
 #include <stdlib.h>
 #include <time.h>
@@ -200,7 +203,7 @@ Clay_RenderCommandArray CreateLayout(void) {
                         .layoutDirection = CLAY_TOP_TO_BOTTOM,
                         .sizing = { 
                             .width = CLAY_SIZING_PERCENT(0.5),
-                            .height = CLAY_SIZING_GROW(0)
+                            .height = CLAY_SIZING_PERCENT(0.5)
                         },
                         .childGap = 16
                     }
@@ -230,8 +233,6 @@ Clay_RenderCommandArray CreateLayout(void) {
                 verticalConfig.data = salesData;
                 verticalConfig.dataCount = SALES_DATA_COUNT;
                 verticalConfig.orientation = CLAY_BARCHART_ORIENTATION_VERTICAL;
-                verticalConfig.barWidth = 60.0f;
-                verticalConfig.barGap = 12.0f;
                 verticalConfig.showLabels = true;
                 verticalConfig.showValues = true;
                 verticalConfig.backgroundColor = (Clay_Color){255, 255, 255, 255};
@@ -243,16 +244,12 @@ Clay_RenderCommandArray CreateLayout(void) {
                     .end = COLOR_GREEN
                 };
                 
-                // Calculate width based on number of bars
-                float chartWidth = (verticalConfig.barWidth + verticalConfig.barGap) * verticalConfig.dataCount + 32;
-                
                 CLAY_AUTO_ID({
                     .layout = {
-                        .sizing = { .width = CLAY_SIZING_GROW(0) },
-                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER }
+                        .sizing = { .width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0) }
                     }
                 }) {
-                    Clay_BarChart_Render(CLAY_STRING("SalesChart"), &verticalConfig, chartWidth, 400);
+                    Clay_BarChart_Render(CLAY_STRING("SalesChart"), &verticalConfig);
                 }
             }
             
@@ -264,7 +261,7 @@ Clay_RenderCommandArray CreateLayout(void) {
                         .layoutDirection = CLAY_TOP_TO_BOTTOM,
                         .sizing = { 
                             .width = CLAY_SIZING_PERCENT(0.5),
-                            .height = CLAY_SIZING_GROW(0)
+                            .height = CLAY_SIZING_PERCENT(0.5)
                         },
                         .childGap = 16
                     }
@@ -326,11 +323,10 @@ Clay_RenderCommandArray CreateLayout(void) {
                 
                 CLAY_AUTO_ID({
                     .layout = {
-                        .sizing = { .width = CLAY_SIZING_GROW(0) },
-                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER }
+                        .sizing = { .width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0) }
                     }
                 }) {
-                    Clay_PieChart_Render(CLAY_STRING("SalesPieChart"), &pieConfig, 600, 450);
+                    Clay_PieChart_Render(CLAY_STRING("SalesPieChart"), &pieConfig);
                 }
             }
         }
@@ -372,14 +368,13 @@ int main(void) {
     Clay_Arena clayMemory = Clay_CreateArenaWithCapacityAndMemory(totalMemorySize, malloc(totalMemorySize));
     Clay_Initialize(
         clayMemory, 
-        (Clay_Dimensions) { 1400, 900 }, 
+        (Clay_Dimensions) { 1080, 720 }, 
         (Clay_ErrorHandler) { HandleClayErrors, 0 }
     );
     
     // Initialize Raylib
     Clay_Raylib_Initialize(
-        1400, 
-        900, 
+        1080, 720, 
         "Clay Extensions - Bar Chart Demo", 
         FLAG_VSYNC_HINT | FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT
     );
@@ -417,18 +412,36 @@ int main(void) {
             (float)GetScreenHeight() 
         });
         
+        // Update pointer state for hover and click interactions
+        Clay_SetPointerState(
+            (Clay_Vector2) { (float)GetMouseX(), (float)GetMouseY() },
+            IsMouseButtonDown(MOUSE_BUTTON_LEFT)
+        );
+        
+        // Update scroll containers for mouse wheel scrolling
+        Clay_UpdateScrollContainers(
+            true,  // Enable drag scrolling
+            (Clay_Vector2) { GetMouseWheelMoveV().x, GetMouseWheelMoveV().y },
+            GetFrameTime()
+        );
+        
         // Generate layout
         Clay_RenderCommandArray renderCommands = CreateLayout();
+        
+        // Prepare pie chart textures (before rendering)
+        for (int i = 0; i < renderCommands.length; i++) {
+            Clay_RenderCommand *cmd = &renderCommands.internalArray[i];
+            if (cmd->commandType == CLAY_RENDER_COMMAND_TYPE_CUSTOM) {
+                Clay_PieChart_PrepareTexture(cmd);
+            }
+        }
         
         // Render
         BeginDrawing();
         ClearBackground(BLACK);
         
-        // Render Clay layout first
+        // Render Clay layout with custom elements as textures
         Clay_Raylib_Render(renderCommands, fonts);
-        
-        // Draw pie chart on top (after Clay renders)
-        Clay_PieChart_Draw(CLAY_STRING("SalesPieChart"), &pieConfig, renderCommands);
         
         EndDrawing();
     }

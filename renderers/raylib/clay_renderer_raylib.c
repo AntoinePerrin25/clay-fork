@@ -240,6 +240,31 @@ void Clay_Raylib_Render(Clay_RenderCommandArray renderCommands, Font* fonts)
             }
             case CLAY_RENDER_COMMAND_TYPE_CUSTOM: {
                 Clay_CustomRenderData *config = &renderCommand->renderData.custom;
+                
+                // Check if this is a pie chart element (using the magic number)
+                if (config->customData) {
+                    uint32_t* elementTypePtr = (uint32_t*)config->customData;
+                    if (*elementTypePtr == 0x50494543) {  // 'PIEC' magic number
+                        // This is a pie chart - render its texture
+                        #ifdef CLAY_USE_PIECHART
+                        RenderTexture2D* pieTexture = Clay_PieChart_GetTexture(renderCommand);
+                        if (pieTexture && pieTexture->id != 0) {
+                            // Draw the texture flipped vertically (Raylib texture coordinates)
+                            DrawTexturePro(
+                                pieTexture->texture,
+                                (Rectangle){ 0, 0, (float)pieTexture->texture.width, -(float)pieTexture->texture.height },
+                                (Rectangle){ boundingBox.x, boundingBox.y, boundingBox.width, boundingBox.height },
+                                (Vector2){ 0, 0 },
+                                0.0f,
+                                WHITE
+                            );
+                        }
+                        #endif
+                        break;
+                    }
+                }
+                
+                // Handle other custom element types (3D models, etc.)
                 CustomLayoutElement *customElement = (CustomLayoutElement *)config->customData;
                 if (!customElement) continue;
                 switch (customElement->type) {
