@@ -32,6 +32,9 @@ typedef CLAY_PACKED_ENUM {
     CLAY_BARCHART_ORIENTATION_HORIZONTAL
 } Clay_BarChart_Orientation;
 
+// Forward declaration for config wrapper
+typedef struct Clay_BarChart_Config Clay_BarChart_Config;
+
 typedef struct {
     float value;
     Clay_String label;
@@ -59,7 +62,7 @@ typedef struct {
     uint32_t seed;  // 0 = use time-based seed
 } Clay_BarChart_Random;
 
-typedef struct {
+struct Clay_BarChart_Config {
     Clay_BarChart_DataPoint *data;
     uint32_t dataCount;
     Clay_BarChart_Orientation orientation;
@@ -81,7 +84,32 @@ typedef struct {
         Clay_BarChart_Gradient gradient;
         Clay_BarChart_Random random;
     } colorConfig;
-} Clay_BarChart_Config;
+};
+
+// Wrapper struct for macro-based configuration (similar to Clay's pattern)
+CLAY__WRAPPER_STRUCT(Clay_BarChart_Config);
+
+// ============================================================================
+// PUBLIC API - Macros (Clay-style API)
+// ============================================================================
+
+/**
+ * CLAY_BARCHART_CONFIG - Create a bar chart configuration inline
+ * Usage: CLAY_BARCHART_CONFIG({ .data = myData, .dataCount = 12, ... })
+ */
+#define CLAY_BARCHART_CONFIG(...) Clay__StoreBarChartConfig(CLAY__CONFIG_WRAPPER(Clay_BarChart_Config, __VA_ARGS__))
+
+/**
+ * CLAY_BARCHART - Render a bar chart element (Clay-style macro)
+ * Usage: 
+ *   CLAY_BARCHART(CLAY_ID("MyChart"), CLAY_BARCHART_CONFIG({
+ *       .data = salesData,
+ *       .dataCount = 12,
+ *       .orientation = CLAY_BARCHART_ORIENTATION_VERTICAL,
+ *       .showLabels = true
+ *   }));
+ */
+#define CLAY_BARCHART(id, config) Clay_BarChart__RenderWithId(id, config)
 
 // ============================================================================
 // PUBLIC API - Functions
@@ -97,6 +125,16 @@ typedef struct {
 void Clay_BarChart_Render(Clay_String id, Clay_BarChart_Config *config);
 
 /**
+ * Render a bar chart with Clay_ElementId (for macro API)
+ */
+void Clay_BarChart__RenderWithId(Clay_ElementId id, Clay_BarChart_Config *config);
+
+/**
+ * Store bar chart config (for macro API, similar to Clay__StoreTextElementConfig)
+ */
+Clay_BarChart_Config* Clay__StoreBarChartConfig(Clay_BarChart_Config config);
+
+/**
  * Create a default bar chart configuration
  */
 Clay_BarChart_Config Clay_BarChart_DefaultConfig(void);
@@ -108,6 +146,39 @@ Clay_BarChart_Config Clay_BarChart_DefaultConfig(void);
 #ifdef CLAY_EXTEND_BARCHART_IMPLEMENTATION
 
 #include <time.h>
+
+// Storage for bar chart configs (circular buffer, resets each frame)
+static Clay_BarChart_Config Clay__BarChartConfigBuffer[32];
+static uint32_t Clay__BarChartConfigIndex = 0;
+
+// Reset config buffer index (call at start of each frame/layout)
+static void Clay_BarChart__ResetConfigBuffer(void) {
+    Clay__BarChartConfigIndex = 0;
+}
+
+// Store bar chart config and return pointer
+Clay_BarChart_Config* Clay__StoreBarChartConfig(Clay_BarChart_Config config) {
+    // Wrap around if we exceed buffer size
+    if (Clay__BarChartConfigIndex >= 32) {
+        Clay__BarChartConfigIndex = 0;
+    }
+    
+    // Apply defaults for unset values
+    if (config.labelFontSize == 0) config.labelFontSize = 16;
+    if (config.backgroundColor.a == 0 && config.backgroundColor.r == 0 && 
+        config.backgroundColor.g == 0 && config.backgroundColor.b == 0) {
+        config.backgroundColor = (Clay_Color){ 245, 245, 245, 255 };
+    }
+    if (config.labelTextColor.a == 0 && config.labelTextColor.r == 0 &&
+        config.labelTextColor.g == 0 && config.labelTextColor.b == 0) {
+        config.labelTextColor = (Clay_Color){ 60, 60, 60, 255 };
+    }
+    if (config.barWidth == 0) config.barWidth = 60.0f;
+    if (config.barGap == 0) config.barGap = 8.0f;
+    
+    Clay__BarChartConfigBuffer[Clay__BarChartConfigIndex] = config;
+    return &Clay__BarChartConfigBuffer[Clay__BarChartConfigIndex++];
+}
 
 // Internal helper: Calculate maximum value from data
 static float Clay_BarChart__CalculateMaxValue(Clay_BarChart_Config *config) {
@@ -364,7 +435,6 @@ void Clay_BarChart_Render(Clay_String id, Clay_BarChart_Config *config) {
     // Calculate max value and label heights
     float maxValue = Clay_BarChart__CalculateMaxValue(config);
     float labelHeight = config->showLabels ? config->labelFontSize + 4 : 0;
-    float valueHeight = config->showValues ? config->labelFontSize + 8 : 0;
     
     // Reference maximum bar height (tallest bar will be this height)
     // This represents available height minus padding and labels
@@ -434,6 +504,86 @@ void Clay_BarChart_Render(Clay_String id, Clay_BarChart_Config *config) {
             }
         }
     }
+}
+
+// Internal render function using Clay_ElementId (for macro API)
+static void Clay_BarChart__RenderInternal(Clay_ElementId elementId, Clay_BarChart_Config *config) {
+    if (config->dataCount == 0 || config->data == NULL) {
+        return;
+    }
+    
+    // Calculate max value and label heights
+    float maxValue = Clay_BarChart__CalculateMaxValue(config);
+    float labelHeight = config->showLabels ? config->labelFontSize + 4 : 0;
+    
+    // Reference maximum bar height (tallest bar will be this height)
+    float referenceMaxHeight = 350.0f;
+    
+    // Main chart container - grows to fill parent with padding
+    CLAY(
+        elementId,
+        {
+            .layout = {
+                .layoutDirection = config->orientation == CLAY_BARCHART_ORIENTATION_VERTICAL 
+                    ? CLAY_LEFT_TO_RIGHT 
+                    : CLAY_TOP_TO_BOTTOM,
+                .sizing = {
+                    .width = CLAY_SIZING_GROW(0),
+                    .height = CLAY_SIZING_GROW(0)
+                },
+                .padding = CLAY_PADDING_ALL(16),
+                .childGap = 0,
+                .childAlignment = config->orientation == CLAY_BARCHART_ORIENTATION_VERTICAL
+                    ? (Clay_ChildAlignment){ .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_BOTTOM }
+                    : (Clay_ChildAlignment){ .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER }
+            },
+            .backgroundColor = config->backgroundColor,
+            .cornerRadius = CLAY_CORNER_RADIUS(8)
+        }
+    ) {
+        if (config->orientation == CLAY_BARCHART_ORIENTATION_VERTICAL) {
+            for (uint32_t i = 0; i < config->dataCount; i++) {
+                float barHeightRatio = config->data[i].value / maxValue;
+                float calculatedBarHeight = barHeightRatio * referenceMaxHeight;
+                
+                Clay_BarChart__RenderVerticalBar(
+                    &config->data[i],
+                    i,
+                    calculatedBarHeight,
+                    labelHeight,
+                    config
+                );
+                
+                if (i < config->dataCount - 1) {
+                    CLAY(
+                        CLAY_IDI("BarGap", i),
+                        {
+                            .layout = {
+                                .sizing = {
+                                    .width = CLAY_SIZING_GROW(1.0f)
+                                }
+                            }
+                        }
+                    ) {}
+                }
+            }
+        } else {
+            for (uint32_t i = 0; i < config->dataCount; i++) {
+                Clay_BarChart__RenderHorizontalBar(
+                    &config->data[i],
+                    i,
+                    config->barWidth,
+                    config->data[i].value,
+                    config
+                );
+            }
+        }
+    }
+}
+
+// Render function for macro API (takes Clay_ElementId)
+void Clay_BarChart__RenderWithId(Clay_ElementId id, Clay_BarChart_Config *config) {
+    Clay_BarChart__RenderInternal(id, config);
 }
 
 // Default configuration helper

@@ -95,8 +95,8 @@ void UpdateSalesData(void) {
     static int index = 0;
     double currentTime = GetTime();
     // Update every second
-    if (currentTime - lastUpdateTime >= 0.25) {
-        // Shift all values to the left (remove first month)
+    if (currentTime - lastUpdateTime >= 2.0f) {
+        // Update month
         salesData[index % SALES_DATA_COUNT].value = 100.0f + (float)(rand() % 150);
         
         // Update pie data to match all sales data values
@@ -195,28 +195,23 @@ Clay_RenderCommandArray CreateLayout(void) {
                     );
                 }
                 
-                // Vertical bar chart
-                Clay_BarChart_Config verticalConfig = Clay_BarChart_DefaultConfig();
-                verticalConfig.data = salesData;
-                verticalConfig.dataCount = SALES_DATA_COUNT;
-                verticalConfig.orientation = CLAY_BARCHART_ORIENTATION_VERTICAL;
-                verticalConfig.showLabels = true;
-                verticalConfig.showValues = true;
-                verticalConfig.backgroundColor = (Clay_Color){255, 255, 255, 255};
-                verticalConfig.labelFontId = FONT_ID_BODY_16;
-                // Use gradient color mode (blue to green)
-                verticalConfig.colorMode = CLAY_BARCHART_COLOR_MODE_GRADIENT;
-                verticalConfig.colorConfig.gradient = (Clay_BarChart_Gradient){
-                    .start = COLOR_BLUE,
-                    .end = COLOR_GREEN
-                };
-                
+                // Vertical bar chart - simplified Clay-style API
                 CLAY_AUTO_ID({
                     .layout = {
                         .sizing = { .width = CLAY_SIZING_GROW(0), .height = CLAY_SIZING_GROW(0) }
                     }
                 }) {
-                    Clay_BarChart_Render(CLAY_STRING("SalesChart"), &verticalConfig);
+                    CLAY_BARCHART(CLAY_ID("SalesChart"), CLAY_BARCHART_CONFIG({
+                        .data = salesData,
+                        .dataCount = SALES_DATA_COUNT,
+                        .orientation = CLAY_BARCHART_ORIENTATION_VERTICAL,
+                        .showLabels = true,
+                        .showValues = true,
+                        .backgroundColor = {255, 255, 255, 254},
+                        .labelFontId = FONT_ID_BODY_16,
+                        .colorMode = CLAY_BARCHART_COLOR_MODE_GRADIENT,
+                        .colorConfig = { .gradient = { .start = COLOR_BLUE, .end = COLOR_GREEN } }
+                    }));
                 }
             }
             

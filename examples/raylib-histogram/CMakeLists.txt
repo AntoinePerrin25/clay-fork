@@ -1,4 +1,14 @@
 cmake_minimum_required(VERSION 3.27)
+set(CMAKE_COLOR_DIAGNOSTICS ON)
+# Enable ccache if available
+find_program(CCACHE_PROGRAM ccache)
+if(CCACHE_PROGRAM)
+  message(STATUS "Found ccache: ${CCACHE_PROGRAM}")
+    set(CMAKE_C_COMPILER_LAUNCHER ccache)
+endif()
+
+set(CMAKE_BUILD_TYPE Release)
+
 project(clay_examples_raylib_extensions_demo C)
 set(CMAKE_C_STANDARD 99)
 
@@ -21,7 +31,10 @@ FetchContent_MakeAvailable(raylib)
 # Bar Chart Extension Demo
 add_executable(clay_demo_extensions demo_extensions.c)
 
-target_compile_options(clay_demo_extensions PUBLIC)
+target_compile_options(clay_demo_extensions PRIVATE
+    $<$<C_COMPILER_ID:GNU,Clang>:-Wall -Wextra>
+    $<$<C_COMPILER_ID:MSVC>:/W4>
+)
 target_include_directories(clay_demo_extensions PUBLIC .)
 
 target_link_libraries(clay_demo_extensions PUBLIC raylib)
@@ -33,7 +46,7 @@ else()
 endif()
 
 add_custom_command(
-        TARGET clay_demo_extensions POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/resources
-        ${CMAKE_CURRENT_BINARY_DIR}/resources)
+  TARGET clay_demo_extensions POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+  ${CMAKE_CURRENT_SOURCE_DIR}/resources
+  ${CMAKE_CURRENT_BINARY_DIR}/resources)
