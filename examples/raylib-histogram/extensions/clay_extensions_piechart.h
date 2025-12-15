@@ -451,20 +451,29 @@ void Clay_PieChart_Render(Clay_String id, Clay_PieChart_Config *config) {
     static Clay_PieChart_CustomElementData elementDataStorage;
     
     Clay_PieChart_CustomElementData *elementData = &elementDataStorage;
-    
-    // Free old texture if this slot was previously used (prevents memory leak)
-    if (elementData->textureValid && elementData->texture.id != 0) {
+
+    // Compute a quick hash for the incoming config so we can detect changes.
+    uint32_t newConfigHash = Clay_PieChart__HashConfig(config);
+    bool configChanged = (elementData->configHash != newConfigHash);
+
+    // If the config changed and we previously had a valid texture, unload it now.
+    if (configChanged && elementData->textureValid && elementData->texture.id != 0) {
         UnloadRenderTexture(elementData->texture);
         elementData->textureValid = false;
     }
-    
-    // Store the config data
+
+    // Store the config data (copy) and update metadata. Preserve existing
+    // texture if the config didn't change so we avoid unnecessary re-rendering.
     elementData->elementType = CLAY_PIECHART_CUSTOM_ELEMENT_TYPE;
     elementData->config = *config;  // Copy the config
     elementData->totalValue = totalValue;
-    elementData->configHash = Clay_PieChart__HashConfig(config);
-    elementData->textureValid = false;  // Will be created on first render
-    elementData->texture = (RenderTexture2D){0};  // Initialize to zero
+    elementData->configHash = newConfigHash;
+
+    if (configChanged) {
+        // Will be created/updated on first PrepareTexture after change
+        elementData->textureValid = false;
+        elementData->texture = (RenderTexture2D){0};  // Initialize to zero
+    }
     
     // Main chart container - grows to fill parent
     CLAY(

@@ -90,48 +90,14 @@ void InitializeSalesData(void) {
     currentMonthIndex = 0;
     lastUpdateTime = GetTime();
 }
-
 // Update sales data - shift left and add new random value
 void UpdateSalesData(void) {
+    static int index = 0;
     double currentTime = GetTime();
-    
     // Update every second
-    if (currentTime - lastUpdateTime >= 1.0) {
+    if (currentTime - lastUpdateTime >= 0.25) {
         // Shift all values to the left (remove first month)
-        for (int i = 0; i < SALES_DATA_COUNT - 1; i++) {
-            salesData[i].value = salesData[i + 1].value;
-        }
-        
-        // Add new random value at the end (100-250 range)
-        salesData[SALES_DATA_COUNT - 1].value = 100.0f + (float)(rand() % 151);
-        
-        // Update month labels to rotate
-        currentMonthIndex = (currentMonthIndex + 1) % 12;
-        for (int i = 0; i < SALES_DATA_COUNT; i++) {
-            int monthIdx = (currentMonthIndex + i) % 12;
-            salesData[i].label = (Clay_String) {
-                .isStaticallyAllocated = true,
-                .length = 3,
-                .chars = monthNames[monthIdx]
-            };
-            // Update color based on position
-            switch(i)
-            {
-                case 0:  salesData[i].color = COLOR_BLUE; break;
-                case 1:  salesData[i].color = COLOR_GREEN; break;
-                case 2:  salesData[i].color = COLOR_ORANGE; break;
-                case 3:  salesData[i].color = COLOR_RED; break;
-                case 4:  salesData[i].color = COLOR_PURPLE; break;
-                case 5:  salesData[i].color = COLOR_TEAL; break;
-                case 6:  salesData[i].color = COLOR_YELLOW; break;
-                case 7:  salesData[i].color = COLOR_PINK; break;
-                case 8:  salesData[i].color = COLOR_BROWN; break;
-                case 9:  salesData[i].color = COLOR_GRAY; break;
-                case 10: salesData[i].color = COLOR_CYAN; break;
-                case 11: salesData[i].color = COLOR_LIME; break;
-                default: salesData[i].color = COLOR_BLACK; break;
-            };
-        }
+        salesData[index % SALES_DATA_COUNT].value = 100.0f + (float)(rand() % 150);
         
         // Update pie data to match all sales data values
         for (int i = 0; i < SALES_DATA_COUNT; i++) {
@@ -141,6 +107,7 @@ void UpdateSalesData(void) {
         }
         
         lastUpdateTime = currentTime;
+        index++;
     }
 }
 

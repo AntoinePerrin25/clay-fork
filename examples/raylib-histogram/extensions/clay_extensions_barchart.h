@@ -27,7 +27,7 @@
 // PUBLIC API - Configuration Structures
 // ============================================================================
 
-typedef enum {
+typedef CLAY_PACKED_ENUM {
     CLAY_BARCHART_ORIENTATION_VERTICAL,
     CLAY_BARCHART_ORIENTATION_HORIZONTAL
 } Clay_BarChart_Orientation;
@@ -38,7 +38,7 @@ typedef struct {
     Clay_Color color;
 } Clay_BarChart_DataPoint;
 
-typedef enum {
+typedef CLAY_PACKED_ENUM {
     CLAY_BARCHART_COLOR_MODE_PER_BAR,      // Each bar uses its own color from DataPoint
     CLAY_BARCHART_COLOR_MODE_PALETTE,      // Cycle through a palette of colors
     CLAY_BARCHART_COLOR_MODE_GRADIENT,     // Gradient between two colors
